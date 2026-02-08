@@ -22,6 +22,7 @@ This project presents a methodological pipeline to explore high-dimensional, sto
 MABS2026_Preys_Predators/
 ├── Scripts_to_launch_experiments/  # Scripts to run the NetLogo model (OpenMOLE/Python)
 ├── post_procs/                     # Analysis scripts (Surrogate Modeling, ANOVA, Visualization)
+├── figures/                        # All figures present in the paper or supplementary materials
 ├── results_v1/                     # Raw simulation output (CSV files) - Initial Batch
 ├── results_v2/                     # Refined simulation output - Secondary Batch
 ├── LICENSE                         # BSD-3-Clause License
