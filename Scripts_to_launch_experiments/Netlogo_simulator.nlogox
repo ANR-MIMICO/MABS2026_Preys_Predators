@@ -1,0 +1,1340 @@
+<?xml version="1.0" encoding="utf-8"?>
+<model version="NetLogo 7.0.2" snapToGrid="false">
+  <code><![CDATA[globals
+[
+  foxes-color     ;; color of foxes
+  bandicoots-color      ;; color of bandicoots
+  grass-color     ;; color of patches/grass
+  dirt-color      ;; color of areas that have no grass right now, but will grow grass back shortly
+  invasive-color  ;; color of invaders
+  trap-color 
+  bandicoots-stride     ;; how much a bandicoot moves in each simulation step
+  invaders-stride ;; how much an invader moves in each simulation step
+  foxes-stride    ;;  how much a fox moves in each simulation step
+  fox-size       ;; size of foxes
+  bandicoot-size        ;; size of bandicoots
+  invader-size    ;; size of invaders
+  output-filename   ;; <--- ADD THIS VARIABLE
+  initial-number-bandicoots
+  total-bandicoots-eaten
+  deaths-by-traps
+  deaths-by-hunger
+  deaths-by-old-age 
+  initial-number-foxes
+  number-invaders-to-add
+  ;amount-of-food-bandicoots-eat
+  ;amount-of-food-invaders-eat
+  bandicoot-reproduce-age      ;;  min age of bandicoots before they can reproduce
+  invader-reproduce-age  ;;  min age of invaders before they can reproduce
+  fox-reproduce-age     ;;  min age of foxes before they can reproduce
+  max-bandicoots-age           ;;  max age of bandicoots before they automatically die
+  max-foxes-age          ;;  max age of foxes before they automatically die
+  max-invaders-age       ;;  max age of invaders before they automatically die
+  max-bandicoots-offspring              ;; maximum number of offspring per reproductive event for a bandicoot
+  max-foxes-offspring             ;; maximum number of offspring per reproductive event for a fox
+  max-invaders-offspring          ;; maximum number of offspring per reproductive event for an invader
+  number-grass-clusters   ;; e.g. 5
+  min-center-distance
+  sprout-delay-time               ;; delay time before a plant begins to grow back, after all of its foliage has been eaten
+]
+
+breed [ bandicoots bandicoot ]
+breed [ invaders invader ]
+breed [ foxes fox ]
+
+
+turtles-own [ energy current-age max-age human-hunt-chance ]       ;; these three variables are used for bandicoots, invaders, and foxes
+
+;; fertile? are patches that can grow grass
+;; plant-energy keeps track of the amount of food or foliage at that patch
+;; countdown keeps track of how much longer until the sprout-delay-time has elapsed for this patch
+patches-own [ fertile?  plant-energy  countdown temp-dist-to-center]
+
+
+to setup
+  clear-all
+
+  clear-all
+ ; random-seed 3
+
+
+  set total-bandicoots-eaten 0
+  set deaths-by-old-age 0
+  set deaths-by-hunger 0
+  set sprout-delay-time 20
+  set bandicoots-stride 0.28
+  set invaders-stride 0.28
+  set output-filename "openmole_output.csv"
+  set foxes-stride 0.32
+  ;;  a larger foxes-stride than bandicoots-stride leads to scenarios where less foxes
+  ;;  can keep a larger number of bandicoots in balance.
+  
+  set bandicoot-reproduce-age 3
+  set invader-reproduce-age 8
+  set fox-reproduce-age 10
+  set max-foxes-age 48 ;4years for a fox
+  set max-invaders-age 108 ;9 years for a rabbit
+  set max-bandicoots-age 96 ;8 years for a bandicoot
+  
+  set initial-number-foxes 200
+  set number-invaders-to-add 100
+  set initial-number-bandicoots 200
+  set deaths-by-traps 0
+  
+  set max-bandicoots-offspring 3
+  set number-grass-clusters 2  ;; e.g. 5
+  set min-center-distance 30 
+  set max-invaders-offspring 3
+  set max-foxes-offspring 2
+  set fox-size 1.8
+  set bandicoot-size 1.4
+  set invader-size 1.5
+  
+  set foxes-color  (orange)
+  set bandicoots-color (gray  )
+  set invasive-color ( brown - 1 )
+  set grass-color (green)
+  set dirt-color (white)
+  set trap-color (magenta  )
+  set-default-shape bandicoots "mouse"
+  set-default-shape foxes "fox"
+  set-default-shape invaders "rabbit"
+  add-starting-grass
+  add-starting-traps
+  add-bandicoots
+  add-foxes
+  reset-ticks
+end
+
+
+to go
+  if ticks >= 1000 [ stop ]
+  ;  if ticks = 100 [add-invaders]
+  
+  ask turtles [
+    ;; we need invaders and bandicoots to eat at the same time
+    ;; so one breed doesn't get all the tasty grass before
+    ;; the others get a chance at it.
+    (ifelse breed = bandicoots     [ bandicoots-live reproduce-bandicoots ]
+      breed = invaders [ invaders-live reproduce-invaders ]
+      breed = foxes    [ foxes-live reproduce-foxes ]
+      [ ] ; anyone else doesn't do anything
+    )
+  ]
+  
+  ask patches [
+    ;; only the fertile patches can grow grass
+    set countdown random sprout-delay-time
+    grow-grass
+  ]
+  ; save-data
+  tick
+end
+
+
+to add-starting-traps 
+  ask patches [
+    let terrain-roll random 100
+    if  terrain-roll < prop-trap and fertile? = true  [ 
+      set pcolor trap-color  ;; Using magenta for high visibility
+     ; set fertile? true  ;; No food here, just safety.
+    ]
+  ]
+end
+
+
+to-report separated-centers [n min-dist]
+  let centers no-patches
+  let candidates patches
+  
+  while [ (count centers < n) and (any? candidates) ] [
+    let p one-of candidates
+    set centers (patch-set centers p)
+    
+    ;; remove all patches too close to the new center
+    set candidates candidates with [
+      distance p >= min-dist
+    ]
+  ]
+  
+  report centers
+end
+
+to add-starting-grass
+  let total-patches count patches
+  let target floor (amount-of-grassland * total-patches / 100)
+  
+  ;; 0. Safety check for 0% or 100% targets to prevent weird edge cases
+  if target <= 0 [ ask patches [ set pcolor dirt-color set fertile? false set plant-energy 0 ] stop ]
+  if target >= total-patches [ ask patches [ set fertile? true set plant-energy max-plant-energy color-grass ] stop ]
+  
+  ;; 1. Reset
+  ask patches [
+    set fertile? false
+    set plant-energy 0
+  ]
+  
+  ;; 2. Pick Centers
+  let centers separated-centers number-grass-clusters min-center-distance
+  
+  ;; 3. PRE-CALCULATE DISTANCES
+  ask patches [
+    set temp-dist-to-center distance min-one-of centers [distance myself]
+  ]
+  
+  ;; 4. THE SOLVER (Finding the perfect decay rate)
+  let k-min 0.00001
+  let k-max 10.0    ;; Increased max slightly for very sparse targets
+  let calculated-decay 0.1
+  
+  repeat 30 [ ;; Increased iterations slightly for better precision
+    set calculated-decay (k-min + k-max) / 2
+    let expected-count sum [exp (- calculated-decay * temp-dist-to-center)] of patches
+    ifelse expected-count > target
+    [ set k-min calculated-decay ]
+    [ set k-max calculated-decay ]
+  ]
+  
+  
+  ;; 5. APPLY THE CALCULATED DECAY
+  ask patches [
+    let probability exp (- calculated-decay * temp-dist-to-center)
+    if random-float 1.0 < probability [
+      set fertile? true
+      set plant-energy max-plant-energy * probability ;* (0.8 + random-float 0.2)
+    ]
+  ]
+  
+  ;; --- 6. FINAL SAFETY BALANCE (CRASH FIXED HERE) ---
+  let current count patches with [ fertile? ]
+  let diff (current - target)
+  
+  ifelse diff < 0 [
+    ;; --- CASE: TOO LITTLE GRASS (Adding) ---
+    let needed (abs diff)
+    ;; Try to find nice edge patches first
+    let candidates patches with [not fertile? and any? neighbors with [fertile?]]
+    
+    ifelse count candidates >= needed [
+      ;; Plan A: We have enough edge patches. Use them.
+      ask n-of needed candidates [
+        set fertile? true
+        set plant-energy random-float max-plant-energy * 0.35
+      ]
+    ] [
+      ;; Plan B: Not enough edges. Just take what edges we have...
+      ask candidates [ set fertile? true set plant-energy random-float max-plant-energy * 0.5 ]
+      ;; ...and fill the rest from anywhere available.
+      let still-needed (needed - count candidates)
+      let backups patches with [not fertile?]
+      ;; Final safety check: ensure we don't ask for more than exist
+      ask n-of (min (list still-needed (count backups))) backups [
+        set fertile? true
+        set plant-energy random-float max-plant-energy * 0.2
+      ]
+    ]
+  ]
+  [ if diff > 0 [
+    ;; --- CASE: TOO MUCH GRASS (Removing) ---
+    ;; THE FIX: Use "max-n-of".
+    ;; This asks for the 'diff' number of patches that have the highest distances.
+    ;; It won't crash because 'diff' cannot be larger than the total count of fertile patches.
+    ask max-n-of diff (patches with [fertile?]) [temp-dist-to-center] [
+      set fertile? false
+      set plant-energy 0
+    ]
+    ]
+  ]
+  
+  ;; 7. Color output
+  ask patches [
+    ifelse fertile? [
+      ifelse plant-energy > 0
+      ;; scale color from whitish green (low energy) to green (high energy)
+      [set pcolor (scale-color green plant-energy (max-plant-energy * 2) 0)]
+      [set pcolor dirt-color]
+    ]
+    [set pcolor dirt-color]
+  ]
+end
+
+to check-traps
+  ;; If I am standing on the trap color, I die.
+  if pcolor = trap-color and random 100 < human-hunt-chance [
+    set deaths-by-traps deaths-by-traps + 1
+    die
+  ]
+end
+
+to add-bandicoots ;; setup bandicoots procedure to add bandicoots based on initial settings
+  create-bandicoots initial-number-bandicoots [  ;; create the bandicoots, then initialize their variables
+    set color bandicoots-color
+    set energy 20 + random 20 - random 20        ;;randomize starting energies
+    set current-age 0  + random max-bandicoots-age     ;;don't start out with everyone at the same age
+    set max-age max-bandicoots-age
+    set human-hunt-chance human-hunt-chance-bandicoots
+    set size bandicoot-size
+    setxy random world-width random world-height
+  ]
+end
+
+to add-foxes ;; setup foxes procedure
+  create-foxes initial-number-foxes  ;; create the bandicoots, then initialize their variables
+  [
+    set color foxes-color
+    set energy 20 + random 20 - random 20         ;;randomize starting energies
+    set current-age 0  + random max-foxes-age     ;;don't start out with everyone at the same age
+    set max-age max-foxes-age
+    set human-hunt-chance human-hunt-chance-foxes
+    set size fox-size
+    setxy random world-width random world-height
+  ]
+end
+
+to add-invaders
+  create-invaders number-invaders-to-add ;; create the bandicoots, then initialize their variables
+  [
+    set color invasive-color
+    set energy 20 + random 20 - random 20            ;;randomize starting energies
+    set current-age 0  + random max-invaders-age     ;;don't start out with everyone at the same age
+    set max-age max-invaders-age
+    set human-hunt-chance human-hunt-chance-invaders
+    set size invader-size
+    setxy random world-width random world-height
+  ]
+end
+
+to bandicoots-live ;; bandicoots procedure
+  move-bandicoots
+  set energy (energy - 1)  ;; bandicoots lose energy as they move
+  set current-age (current-age + 1)
+  bandicoots-eat-grass
+  check-traps
+  death
+end
+
+to foxes-live ;; foxes procedure
+  move-foxes
+  set energy (energy - 1)  ;; foxes lose energy as they move
+  set current-age (current-age + 1)
+  foxes-eat-prey
+  check-traps
+  death
+end
+
+to invaders-live ;; invaders procedure
+  move-invaders
+  set energy (energy - 1)  ;; invaders lose energy as they move
+  set current-age (current-age + 1)
+  invaders-eat-grass
+  check-traps
+  death
+end
+
+to move-bandicoots  ;; bandicoots procedure
+                    ;; Find nearby patches that are fertile AND have grass growing
+  let visible-food patches in-radius view-radius-bandicoots  with [fertile? and plant-energy > 0]
+  
+  ;; Decide how to move
+  ifelse any? visible-food 
+  [         
+    ;; --- SMART BEHAVIOR (EAT) ---
+    ;; Move towards the closest patch with food
+    let target min-one-of visible-food [distance myself]
+    face target
+    fd bandicoots-stride
+  ]
+  [
+    ;; --- RANDOM BEHAVIOR (WANDER) ---
+    ;; This MUST be inside the second set of brackets!
+    rt random 50 - random 50
+    fd bandicoots-stride
+  ]
+end
+
+to move-foxes
+  ;; 1. Define how far the fox can "see"
+  ;; You can change this number to make them see farther or shorter distances.
+  
+  ;; 2. Find all potential prey within sight
+  ;; We look for 'bandicoots' in our radius.
+  let visible-prey bandicoots in-radius view-radius-foxes
+  
+  ;; 3. Decide how to move
+  ifelse any? visible-prey ; and energy < 7
+  [         
+    ;; --- SMART BEHAVIOR (HUNT) ---
+    ;; There is prey nearby! Find the single closest one.
+    let target min-one-of visible-prey [distance myself]
+    ;; Turn to face the target and move towards it.
+    face target
+    fd foxes-stride
+  ]
+  [
+    ;; --- RANDOM BEHAVIOR (WANDER) ---
+    ;; No prey in sight. Continue wandering randomly like before.
+    rt random 50 - random 50
+    fd foxes-stride
+  ]
+end
+
+to move-invaders
+  
+  ;; Find nearby patches that are fertile AND have grass growing
+  let visible-food patches in-radius view-radius-invaders with [fertile? and plant-energy > 0]
+  
+  ;; Decide how to move
+  ifelse any? visible-food 
+  [         
+    ;; --- SMART BEHAVIOR (EAT) ---
+    ;; Move towards the closest patch with food
+    let target min-one-of visible-food [distance myself]
+    face target
+    fd invaders-stride
+  ]
+  [
+    ;; --- RANDOM BEHAVIOR (WANDER) ---
+    ;; This MUST be inside the second set of brackets!
+    rt random 50 - random 50
+    fd invaders-stride
+  ]
+end
+
+to bandicoots-eat-grass  ;; bandicoots procedure
+                         ;; if there is enough grass to eat at this patch, the bandicoots eat it
+                         ;; and then gain energy from it.
+  if plant-energy > amount-of-food-bandicoots-eat [
+    ;; plants lose ten times as much energy as the bandicoots gains (trophic level assumption)
+    set plant-energy (plant-energy - (amount-of-food-bandicoots-eat * 10))
+    set energy (energy + bandicoots-energy-gain-from-grass)  ;; bandicoots gain energy by eating
+  ]
+  ;; if plant-energy is negative, make it positive
+  if plant-energy <=  amount-of-food-bandicoots-eat  [set plant-energy 0]
+end
+
+
+to invaders-eat-grass  ;; invaders procedure
+                       ;; if there is enough grass to eat at this patch, the invaders eat it
+                       ;; and then gain energy from it.
+  if plant-energy > amount-of-food-invaders-eat  [
+    ;; plants lose 10 * as much energy as the invader gains (trophic level assumption)
+    set plant-energy (plant-energy - (amount-of-food-invaders-eat * 10))
+    set energy energy + invaders-energy-gain-from-grass  ;; bandicoots gain energy by eating
+  ]
+  ;; if plant-energy is negative, make it positive
+  if plant-energy <=  amount-of-food-invaders-eat  [set plant-energy 0]
+end
+
+
+
+to foxes-eat-prey  ;; foxes procedure
+  
+  if (any? bandicoots-here ) 
+      [ask one-of  bandicoots-here
+        [die]
+        set total-bandicoots-eaten total-bandicoots-eaten + 1
+        set energy (energy + foxes-energy-gain-from-bandicoots)
+  ]
+end
+
+
+to reproduce-bandicoots  ;; bandicoots procedure
+  let number-offspring (random (max-bandicoots-offspring + 1)) ;; set number of potential offspring from 1 to (max-bandicoots-offspring)
+  if (energy > ((number-offspring + 1) * min-reproduce-energy-bandicoots)  and current-age > bandicoot-reproduce-age)
+  [
+    if random 2 = 1           ;;only half of the fertile bandicoots reproduce (gender)
+    [
+      set energy (energy - (number-offspring  * min-reproduce-energy-bandicoots)) ;;lose energy when reproducing- given to children
+      hatch number-offspring
+      [
+        set size bandicoot-size
+        set color bandicoots-color
+        set energy min-reproduce-energy-bandicoots ;; split remaining half of energy amongst litter
+        set current-age 0
+        rt random 360 fd bandicoots-stride
+      ]    ;; hatch an offspring set it heading off in a random direction and move it forward a step
+    ]
+  ]
+end
+
+
+to reproduce-invaders  ;; bandicoots procedure
+  let number-offspring (random (max-invaders-offspring + 1)) ;; set number of potential offspring from 1 to (max-invaders-offspring)
+  if (energy > ((number-offspring + 1) *  min-reproduce-energy-invaders)  and current-age > invader-reproduce-age)
+  [
+    if random 2 = 1           ;;only half of the fertile invaders reproduce (gender)
+    [
+      set energy (energy - ( number-offspring * min-reproduce-energy-invaders))  ;;lose energy when reproducing - given to children
+      hatch number-offspring
+      [
+        set size invader-size
+        set color invasive-color
+        set energy min-reproduce-energy-invaders ;; split remaining half of energy amongst litter
+        set current-age 0
+        rt random 360 fd invaders-stride
+      ]    ;; hatch an offspring set it heading off in a random direction and move it forward a step
+    ]
+  ]
+end
+
+
+to reproduce-foxes  ;; bandicoots procedure
+  let number-offspring (random (max-foxes-offspring + 1)) ;; set number of potential offspring from 1 to (max-invaders-offspring)
+  if (energy > ((number-offspring + 1) * min-reproduce-energy-foxes)  and current-age > fox-reproduce-age)
+  [
+    if random 2 = 1           ;;only half of the fertile bandicoots reproduce (gender)
+    [
+      set energy (energy - (number-offspring * min-reproduce-energy-foxes)) ;;lose energy when reproducing - given to children
+      hatch number-offspring
+      [
+        set current-age 0
+        set size fox-size
+        set color foxes-color
+        set energy min-reproduce-energy-foxes ;; split remaining half of energy amongst litter
+        rt random 360 fd foxes-stride
+      ]    ;; hatch an offspring set it heading off in a random direction and move it forward a step
+    ]
+  ]
+end
+
+
+to death  ;; common procedure for bandicoots, foxes & invaders to die
+          ;; die when energy dips below zero (starvation), or get too old
+  if (current-age > max-age) [
+  set deaths-by-old-age  deaths-by-old-age + 1 
+   die 
+  ]
+  if  (energy < 0) [
+  set deaths-by-hunger deaths-by-hunger + 1 
+   die 
+  ]
+  
+  
+end
+
+to grow-grass  ;; patch procedure
+  set countdown (countdown - 1)
+  ;; fertile patches gain 1 energy unit per turn, up to a maximum max-plant-energy threshold
+  if fertile? and countdown <= 0
+      [set plant-energy (plant-energy + plant-growth-rate)
+        if plant-energy > max-plant-energy [set plant-energy max-plant-energy]]
+  if not fertile?
+      [set plant-energy 0]
+  if plant-energy < 0 [set plant-energy 0 set countdown sprout-delay-time]
+  color-grass
+end
+
+to color-grass ;; patch procedure
+  if fertile? [
+    if plant-energy > 0 and pcolor != trap-color
+    ;; scale color of patch from whitish green for low energy (less foliage) to green - high energy (lots of foliage)
+    [set pcolor (scale-color green plant-energy  (max-plant-energy * 2)  0)]
+  ]
+end
+
+to save-data
+  ;; --- 1. GENERATE LONG FILENAME (17 PARAMETERS) ---
+  ;; We use short codes to save space:
+  ;; G=Grass, B=Bandicoot, F=Fox, I=Invader/Rabbit, E=Energy, R=Repro, V=View, H=Hunt
+  let file-name (word "openmole_output.csv")
+  file-open file-name
+   ;; --- 2. SETUP FILE HEADERS (Run once at tick 0) ---
+  if ticks = 0 [
+    ;; If a file with this EXACT config exists, delete it to start fresh
+    if file-exists? file-name [ file-delete file-name ]
+    
+    file-open file-name
+    
+    ;; FIXED HEADERS (10 Columns)
+    file-print "Tick,Bandicoots,Invaders,Foxes,Grass_Health_Index,Total_Bandicoots_Eaten,Trap_Deaths,Old_Age_Deaths,Hunger_Deaths"
+    
+    file-close
+  ]
+
+  ;; --- 3. SAVE DATA ---
+  ;; Only proceed if file is closed (safety check)
+  file-open file-name
+
+  ;; Write the data line
+  file-print (word 
+    ticks "," 
+    count bandicoots "," 
+    count invaders "," 
+    count foxes "," 
+    ;; Grass Health Index (avoid division by zero check included implicitly by precision if number is valid)
+    precision (sum [plant-energy] of patches / max-plant-energy) 2 ","
+    total-bandicoots-eaten ","  
+    deaths-by-traps "," 
+    deaths-by-old-age "," 
+    deaths-by-hunger
+  )
+    file-close
+end
+
+; Copyright 2011 Uri Wilensky.
+; See Info tab for full copyright and license.]]></code>
+  <widgets>
+    <view x="482" wrappingAllowedX="true" y="17" frameRate="30.0" minPycor="-30" height="707" showTickCounter="true" patchSize="11.525" fontSize="10" wrappingAllowedY="true" width="707" tickCounterLabel="ticks" maxPycor="30" updateMode="0" maxPxcor="30" minPxcor="-30"></view>
+    <button x="1758" y="658" height="40" disableUntilTicks="true" forever="false" kind="Observer" width="147" display="launch an invasion">add-invaders</button>
+    <plot x="11" autoPlotX="true" yMax="200.0" autoPlotY="true" yAxis="populations" y="535" xMin="0.0" height="219" legend="true" xMax="1000.0" yMin="0.0" width="448" xAxis="ticks" display="populations">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="bandicoots" color="-7500403" legend="true">
+        <setup></setup>
+        <update>plot count bandicoots</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="foxes" color="-955883" legend="true">
+        <setup></setup>
+        <update>plot count foxes</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="invaders" color="-6459832" legend="true">
+        <setup></setup>
+        <update>plot count invaders</update>
+      </pen>
+      <pen interval="1.0" mode="0" display="grass" color="-10899396" legend="true">
+        <setup></setup>
+        <update>plot (sum [plant-energy] of patches / max-plant-energy)</update>
+      </pen>
+    </plot>
+    <monitor x="11" precision="3" y="497" height="60" fontSize="11" width="100" display="bandicoots">count bandicoots</monitor>
+    <monitor x="104" precision="3" y="490" height="60" fontSize="11" width="100" display="foxes">count foxes</monitor>
+    <monitor x="284" precision="0" y="496" height="60" fontSize="11" width="100" display="invaders">count invaders</monitor>
+    <button x="368" y="0" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="88" display="setup">setup</button>
+    <button x="375" y="42" height="40" disableUntilTicks="true" forever="true" kind="Observer" width="92" display="go/pause">go</button>
+    <slider x="1477" step="1" y="661" max="20" width="250" display="min-reproduce-energy-invaders" height="50" min="1" direction="Horizontal" default="19.0" variable="min-reproduce-energy-invaders"></slider>
+    <slider x="1224" step="1" y="663" max="20" width="250" display="invaders-energy-gain-from-grass" height="50" min="1" direction="Horizontal" default="18.0" variable="invaders-energy-gain-from-grass"></slider>
+    <slider x="1227" step="1" y="8" max="20" width="250" display="bandicoots-energy-gain-from-grass" height="50" min="1" direction="Horizontal" default="12.0" variable="bandicoots-energy-gain-from-grass"></slider>
+    <slider x="1490" step="1" y="11" max="20" width="250" display="min-reproduce-energy-bandicoots" height="50" min="1" direction="Horizontal" default="12.0" variable="min-reproduce-energy-bandicoots"></slider>
+    <slider x="1226" step="1" y="323" max="30" width="201" display="min-reproduce-energy-foxes" height="50" min="1" direction="Horizontal" default="30.0" variable="min-reproduce-energy-foxes"></slider>
+    <slider x="1446" step="1" y="323" max="50" width="250" display="foxes-energy-gain-from-bandicoots" height="50" min="10" direction="Horizontal" default="30.0" variable="foxes-energy-gain-from-bandicoots"></slider>
+    <slider x="8" step="1" y="4" max="100" width="212" display="amount-of-grassland" height="50" min="0" direction="Horizontal" default="56.0" variable="amount-of-grassland" units="%"></slider>
+    <slider x="6" step="1" y="60" max="10" width="250" display="amount-of-food-bandicoots-eat" height="50" min="1" direction="Horizontal" default="7.0" variable="amount-of-food-bandicoots-eat"></slider>
+    <slider x="5" step="1" y="115" max="10" width="250" display="amount-of-food-invaders-eat" height="50" min="1" direction="Horizontal" default="1.0" variable="amount-of-food-invaders-eat"></slider>
+    <slider x="9" step="1" y="170" max="25" width="250" display="plant-growth-rate" height="50" min="5" direction="Horizontal" default="25.0" variable="plant-growth-rate"></slider>
+    <slider x="6" step="1" y="225" max="200" width="250" display="max-plant-energy" height="50" min="25" direction="Horizontal" default="200.0" variable="max-plant-energy"></slider>
+    <slider x="1228" step="1" y="608" max="100" width="250" display="human-hunt-chance-invaders" height="50" min="0" direction="Horizontal" default="8.0" variable="human-hunt-chance-invaders"></slider>
+    <slider x="1219" step="1" y="388" max="100" width="250" display="human-hunt-chance-foxes" height="50" min="0" direction="Horizontal" default="51.0" variable="human-hunt-chance-foxes"></slider>
+    <slider x="1231" step="1" y="69" max="100" width="250" display="human-hunt-chance-bandicoots" height="50" min="0" direction="Horizontal" default="44.0" variable="human-hunt-chance-bandicoots"></slider>
+    <slider x="1486" step="1" y="388" max="6" display="view-radius-foxes" height="50" min="0" direction="Horizontal" default="2.0" variable="view-radius-foxes" width="250" sizeVersion="0"></slider>
+    <slider x="1498" step="1" y="67" max="6" width="250" display="view-radius-bandicoots" height="50" min="0" direction="Horizontal" default="5.0" variable="view-radius-bandicoots"></slider>
+    <slider x="1491" step="1" y="596" max="6" width="250" display="view-radius-invaders" height="50" min="0" direction="Horizontal" default="4.0" variable="view-radius-invaders"></slider>
+    <slider x="13" step="1" y="301" max="100" width="250" display="prop-trap" height="50" min="1" direction="Horizontal" default="31.0" variable="prop-trap"></slider>
+  </widgets>
+  <info><![CDATA[## WHAT IS IT?
+
+This model explores the stability of predator-prey ecosystems and how that stability is affected when new species are introduced into the ecosystem.
+
+## HOW IT WORKS
+
+Birds and bugs wander randomly around the landscape.  Each step costs both animals energy and they must consume a food source (bugs must eat grass and birds must eat bugs & the invaders) to replenish their energy - when they run out of energy they die. To allow the population to continue, each bird or bug must have enough energy to have a litter of offspring and the offspring and parent split the energy amongst themselves.  Grass grows at a fixed rate, and when it is eaten, a fixed amount of grass energy is deducted from the patch (square) where the grass was eaten.
+
+Invasive species (mice) can be introduced to this ecosystem as well.  The mice are indirect competitors of the bugs.  They also eat grass.  They reproduce following the same rules as bugs.  The eating behavior of the mice and the bugs can be adjusted.
+
+Other disruptions such as removing a portion of the bug population (simulating a disease) or burning down the grass (removing the food source for bugs and invasive species temporarily) can also be tested to see how these disruptions affect the stability of the ecosystem.
+
+## HOW TO USE IT
+
+1. Adjust the slider parameters (see below), or use the default settings.
+2. Press the SETUP button.
+4. Press the GO button to begin the simulation.
+5. View the POPULATIONS plot to watch the populations fluctuate over time.
+6. View the birds/bugs and invaders monitors to view current population sizes.
+7. Adjust the NUMBER-INVADERS-TO-ADD and AMOUNT-OF-FOOD-INVADERS-EAT and press LAUNCH INVASION.
+8. View the POPULATIONS plot to watch the populations fluctuate over time.
+
+Initial Settings:
+
+CONSTANT-SIMULATION-LENGTH:  When turned "on" the model run will automatically stop at 2500 ticks.  When turned "off" the model run will continue without automatically stopping.
+AMOUNT-OF-GRASSLAND: The percentage of patches in the world & view that produce grass.
+INITIAL-NUMBER-BUGS: The initial size of the bug population.
+INITIAL-NUMBER-BIRDS: The initial size of the bird population.
+AMOUNT-OF-FOOD-BUGS-EAT: The amount of grass consumed at each simulation step by each one of the bugs.
+MIN-REPRODUCE-ENERGY-BIRDS:  The amount of energy required for a bird to accumulate before it automatically produces an offspring.
+
+Other Settings:
+
+GRASS-TO-BURN-DOWN:  Sets the % of designated grassland patches that will have all their grass immediately removed when the BURN THE DOWN GRASS button is pressed.
+%-OF-BUGS-TO-REMOVE:  Sets the % of existing bug population that will be immediately removed when the REMOVE BUGS button is pressed.
+
+NUMBER-INVADERS-TO-ADD: The number of the invasive species introduced when LAUNCH INVASION is pressed.
+AMOUNT-OF-FOOD-INVADERS-EAT: The amount of grass consumed at each simulation step by each one of the invasive species.
+
+## THINGS TO NOTICE
+
+Watch as the grass, predators, and bug populations fluctuate.  How are increases and decreases in the sizes of each population related?
+
+How does changing the attributes of the bugs (AMOUNT-OF-FOOD-BUGS-EAT) or birds (MIN-REPRODUCE-ENERGY-BUGS) affect the stability and carrying capacity of the ecosystem?
+
+How does introducing an invasive species that has the same diet as the bugs (i.e. grass) affect the stability of the ecosystem?  How does setting the AMOUNT-OF-FOOD-INVADERS-EAT to a different value than AMOUNT-OF-FOOD-BUGS-EAT affect the stability of each population in the ecosystem?
+
+## THINGS TO TRY
+
+Try adjusting the parameters under various settings. How sensitive is the stability of the model to the particular parameters.  Does the parameter setting affect the amount of fluctuations, the average values of each population, or does it lead to the collapse of one of the populations in the ecosystem (death of all the bugs, birds, or invasive species)?
+
+## EXTENDING THE MODEL
+
+Additional invasive plant or invasive predator could be added.
+
+The amount of food a predator or a bug eats could be adjusted so that faster food consumption also corresponds to higher metabolism (cost of energy per move per turn), so that there is a competitive disadvantage for rapid food consumption in some environments.
+
+Traits such as amount of food a predator eats, or min-reproduction energy could be inherited in offspring and subject to slight random changes from mutations.
+
+## NETLOGO FEATURES
+
+scale-color is used to visualize the amount of food (energy) available for bugs or invaders at each patch.  A whitish green (color of 59.9) is used to represent little grass foliage (not much food available at this patch) and green (color of 55) is used to represents lots of foliage (max. food available at this patch).  All other values for food plant-energy are linearly scaled between this range of colors.
+
+## RELATED MODELS
+
+Look at the Wolf-Sheep model for a basic predator prey model example.
+
+Look at Bug Hunt Consumers for a simpler version of this model that includes no predators or invaders.
+
+## CREDITS AND REFERENCES
+
+This model is a part of the BEAGLE curriculum (http://ccl.northwestern.edu/rp/beagle/index.shtml)
+
+## HOW TO CITE
+
+If you mention this model or the NetLogo software in a publication, we ask that you include the citations below.
+
+For the model itself:
+
+* Novak, M. and Wilensky, U. (2011).  NetLogo Bug Hunt Predators and Invasive Species model.  http://ccl.northwestern.edu/netlogo/models/BugHuntPredatorsandInvasiveSpecies.  Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
+
+Please cite the NetLogo software as:
+
+* Wilensky, U. (1999). NetLogo. http://ccl.northwestern.edu/netlogo/. Center for Connected Learning and Computer-Based Modeling, Northwestern University, Evanston, IL.
+
+## COPYRIGHT AND LICENSE
+
+Copyright 2011 Uri Wilensky.
+
+![CC BY-NC-SA 3.0](http://ccl.northwestern.edu/images/creativecommons/byncsa.png)
+
+This model is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 3.0 License.  To view a copy of this license, visit https://creativecommons.org/licenses/by-nc-sa/3.0/ or send a letter to Creative Commons, 559 Nathan Abbott Way, Stanford, California 94305, USA.
+
+NetLogo itself is free software for non-commercial use under the terms of the GNU General Public License ([see full license information here](https://ccl.northwestern.edu/netlogo/docs/copyright.html)).
+
+To inquire about commercial licenses for either NetLogo or specific models from the models library, please contact netlogo-commercial-admin@ccl.northwestern.edu.
+
+<!-- 2011 Cite: Novak, M. -->]]></info>
+  <turtleShapes>
+    <shape name="default" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="150" y="5"></point>
+        <point x="40" y="250"></point>
+        <point x="150" y="205"></point>
+        <point x="260" y="250"></point>
+      </polygon>
+    </shape>
+    <shape name="aphid" rotatable="true" editableColorIndex="0">
+      <circle x="129" y="84" marked="true" color="-1920102913" diameter="42" filled="true"></circle>
+      <circle x="96" y="126" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+    </shape>
+    <shape name="aphid-with-parasite" rotatable="true" editableColorIndex="0">
+      <circle x="129" y="84" marked="true" color="-1920102913" diameter="42" filled="true"></circle>
+      <circle x="96" y="126" marked="true" color="-1920102913" diameter="108" filled="true"></circle>
+      <circle x="8" y="8" marked="false" color="-684578305" diameter="285" filled="false"></circle>
+    </shape>
+    <shape name="bird" rotatable="true" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="151" y="170"></point>
+        <point x="136" y="170"></point>
+        <point x="123" y="229"></point>
+        <point x="143" y="244"></point>
+        <point x="156" y="244"></point>
+        <point x="179" y="229"></point>
+        <point x="166" y="170"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="152" y="154"></point>
+        <point x="137" y="154"></point>
+        <point x="125" y="213"></point>
+        <point x="140" y="229"></point>
+        <point x="159" y="229"></point>
+        <point x="179" y="214"></point>
+        <point x="167" y="154"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="151" y="140"></point>
+        <point x="136" y="140"></point>
+        <point x="126" y="202"></point>
+        <point x="139" y="214"></point>
+        <point x="159" y="214"></point>
+        <point x="176" y="200"></point>
+        <point x="166" y="140"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="152" y="86"></point>
+        <point x="227" y="72"></point>
+        <point x="286" y="97"></point>
+        <point x="272" y="101"></point>
+        <point x="294" y="117"></point>
+        <point x="276" y="118"></point>
+        <point x="287" y="131"></point>
+        <point x="270" y="131"></point>
+        <point x="278" y="141"></point>
+        <point x="264" y="138"></point>
+        <point x="267" y="145"></point>
+        <point x="228" y="150"></point>
+        <point x="153" y="147"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="160" y="74"></point>
+        <point x="159" y="61"></point>
+        <point x="149" y="54"></point>
+        <point x="130" y="53"></point>
+        <point x="139" y="62"></point>
+        <point x="133" y="81"></point>
+        <point x="127" y="113"></point>
+        <point x="129" y="149"></point>
+        <point x="134" y="177"></point>
+        <point x="150" y="206"></point>
+        <point x="168" y="179"></point>
+        <point x="172" y="147"></point>
+        <point x="169" y="111"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="129" y="53"></point>
+        <point x="135" y="58"></point>
+        <point x="139" y="54"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="148" y="86"></point>
+        <point x="73" y="72"></point>
+        <point x="14" y="97"></point>
+        <point x="28" y="101"></point>
+        <point x="6" y="117"></point>
+        <point x="24" y="118"></point>
+        <point x="13" y="131"></point>
+        <point x="30" y="131"></point>
+        <point x="22" y="141"></point>
+        <point x="36" y="138"></point>
+        <point x="33" y="145"></point>
+        <point x="72" y="150"></point>
+        <point x="147" y="147"></point>
+      </polygon>
+    </shape>
+    <shape name="bug" rotatable="true" editableColorIndex="0">
+      <circle x="75" y="116" marked="true" color="-1920102913" diameter="150" filled="true"></circle>
+      <circle x="110" y="75" marked="true" color="-1920102913" diameter="80" filled="true"></circle>
+      <line endX="80" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+      <line endX="220" startY="100" marked="true" color="-1920102913" endY="30" startX="150"></line>
+    </shape>
+    <shape name="egg" rotatable="true" editableColorIndex="0">
+      <circle x="120" y="95" marked="false" color="-1" diameter="60" filled="true"></circle>
+      <circle x="105" y="142" marked="false" color="-1" diameter="90" filled="true"></circle>
+      <polygon color="-1" filled="true" marked="false">
+        <point x="195" y="180"></point>
+        <point x="180" y="120"></point>
+        <point x="120" y="120"></point>
+        <point x="105" y="180"></point>
+      </polygon>
+    </shape>
+    <shape name="fox" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="72" y="225"></point>
+        <point x="94" y="249"></point>
+        <point x="109" y="252"></point>
+        <point x="119" y="252"></point>
+        <point x="111" y="242"></point>
+        <point x="99" y="241"></point>
+        <point x="87" y="225"></point>
+        <point x="91" y="181"></point>
+        <point x="62" y="112"></point>
+        <point x="43" y="119"></point>
+        <point x="28" y="150"></point>
+        <point x="29" y="164"></point>
+        <point x="58" y="204"></point>
+        <point x="50" y="241"></point>
+        <point x="74" y="271"></point>
+        <point x="84" y="279"></point>
+        <point x="99" y="279"></point>
+        <point x="98" y="267"></point>
+        <point x="87" y="266"></point>
+        <point x="67" y="242"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="210" y="90"></point>
+        <point x="204" y="56"></point>
+        <point x="214" y="42"></point>
+        <point x="222" y="66"></point>
+        <point x="211" y="71"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="181" y="107"></point>
+        <point x="213" y="70"></point>
+        <point x="226" y="63"></point>
+        <point x="257" y="71"></point>
+        <point x="260" y="90"></point>
+        <point x="300" y="120"></point>
+        <point x="289" y="129"></point>
+        <point x="249" y="110"></point>
+        <point x="218" y="135"></point>
+        <point x="209" y="151"></point>
+        <point x="204" y="164"></point>
+        <point x="192" y="179"></point>
+        <point x="169" y="186"></point>
+        <point x="154" y="190"></point>
+        <point x="129" y="190"></point>
+        <point x="89" y="181"></point>
+        <point x="69" y="167"></point>
+        <point x="60" y="112"></point>
+        <point x="124" y="111"></point>
+        <point x="160" y="112"></point>
+        <point x="170" y="105"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="false">
+        <point x="252" y="143"></point>
+        <point x="242" y="141"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="false">
+        <point x="254" y="136"></point>
+        <point x="232" y="137"></point>
+      </polygon>
+      <line endX="89" startY="159" marked="false" color="255" endY="179" startX="80"></line>
+      <polygon color="-1653716737" filled="true" marked="false">
+        <point x="262" y="138"></point>
+        <point x="234" y="149"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="50" y="121"></point>
+        <point x="36" y="119"></point>
+        <point x="24" y="123"></point>
+        <point x="14" y="128"></point>
+        <point x="6" y="143"></point>
+        <point x="8" y="165"></point>
+        <point x="8" y="181"></point>
+        <point x="7" y="197"></point>
+        <point x="4" y="233"></point>
+        <point x="23" y="201"></point>
+        <point x="28" y="184"></point>
+        <point x="30" y="169"></point>
+        <point x="28" y="153"></point>
+        <point x="48" y="145"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="171" y="181"></point>
+        <point x="178" y="263"></point>
+        <point x="187" y="277"></point>
+        <point x="197" y="273"></point>
+        <point x="202" y="267"></point>
+        <point x="187" y="260"></point>
+        <point x="186" y="236"></point>
+        <point x="194" y="167"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="223" y="75"></point>
+        <point x="226" y="58"></point>
+        <point x="245" y="44"></point>
+        <point x="244" y="68"></point>
+        <point x="233" y="73"></point>
+      </polygon>
+      <line endX="112" startY="181" marked="false" color="255" endY="185" startX="89"></line>
+      <line endX="41" startY="150" marked="false" color="255" endY="130" startX="31"></line>
+      <polygon color="255" filled="true" marked="false">
+        <point x="230" y="67"></point>
+        <point x="228" y="54"></point>
+        <point x="222" y="62"></point>
+        <point x="224" y="72"></point>
+      </polygon>
+      <line endX="30" startY="150" marked="false" color="255" endY="165" startX="30"></line>
+      <circle x="225" y="76" marked="false" color="-303222273" diameter="22" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="225" y="121"></point>
+        <point x="258" y="150"></point>
+        <point x="267" y="146"></point>
+        <point x="236" y="112"></point>
+      </polygon>
+    </shape>
+    <shape name="fox3" rotatable="false" editableColorIndex="3">
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="90" y="105"></point>
+        <point x="75" y="81"></point>
+        <point x="60" y="75"></point>
+        <point x="44" y="83"></point>
+        <point x="36" y="98"></point>
+        <point x="38" y="120"></point>
+        <point x="38" y="136"></point>
+        <point x="37" y="152"></point>
+        <point x="15" y="180"></point>
+        <point x="53" y="156"></point>
+        <point x="58" y="139"></point>
+        <point x="60" y="124"></point>
+        <point x="58" y="108"></point>
+        <point x="90" y="120"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="196" y="106"></point>
+        <point x="228" y="69"></point>
+        <point x="240" y="60"></point>
+        <point x="263" y="63"></point>
+        <point x="275" y="89"></point>
+        <point x="300" y="110"></point>
+        <point x="285" y="135"></point>
+        <point x="240" y="120"></point>
+        <point x="233" y="134"></point>
+        <point x="225" y="150"></point>
+        <point x="225" y="165"></point>
+        <point x="207" y="178"></point>
+        <point x="184" y="185"></point>
+        <point x="169" y="189"></point>
+        <point x="144" y="189"></point>
+        <point x="104" y="180"></point>
+        <point x="84" y="166"></point>
+        <point x="78" y="113"></point>
+        <point x="139" y="110"></point>
+        <point x="175" y="111"></point>
+        <point x="185" y="104"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="252" y="143"></point>
+        <point x="242" y="141"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="254" y="136"></point>
+        <point x="232" y="137"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="262" y="138"></point>
+        <point x="234" y="149"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="195" y="165"></point>
+        <point x="180" y="210"></point>
+        <point x="143" y="247"></point>
+        <point x="144" y="263"></point>
+        <point x="159" y="267"></point>
+        <point x="164" y="253"></point>
+        <point x="195" y="225"></point>
+        <point x="225" y="165"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="238" y="75"></point>
+        <point x="240" y="45"></point>
+        <point x="255" y="30"></point>
+        <point x="259" y="68"></point>
+        <point x="248" y="73"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="285" y="135"></point>
+        <point x="297" y="116"></point>
+        <point x="285" y="111"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="135" y="210"></point>
+        <point x="151" y="181"></point>
+        <point x="119" y="165"></point>
+        <point x="105" y="165"></point>
+        <point x="73" y="184"></point>
+        <point x="31" y="183"></point>
+        <point x="-9" y="205"></point>
+        <point x="-9" y="226"></point>
+        <point x="6" y="231"></point>
+        <point x="7" y="214"></point>
+        <point x="38" y="198"></point>
+        <point x="75" y="225"></point>
+        <point x="120" y="210"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="218" y="80"></point>
+        <point x="203" y="50"></point>
+        <point x="233" y="65"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="195" y="180"></point>
+        <point x="240" y="210"></point>
+        <point x="270" y="240"></point>
+        <point x="293" y="246"></point>
+        <point x="297" y="231"></point>
+        <point x="283" y="226"></point>
+        <point x="240" y="180"></point>
+        <point x="210" y="165"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="true">
+        <point x="94" y="112"></point>
+        <point x="76" y="119"></point>
+        <point x="60" y="151"></point>
+        <point x="60" y="165"></point>
+        <point x="79" y="197"></point>
+        <point x="78" y="239"></point>
+        <point x="100" y="279"></point>
+        <point x="121" y="279"></point>
+        <point x="126" y="264"></point>
+        <point x="109" y="263"></point>
+        <point x="93" y="232"></point>
+        <point x="120" y="195"></point>
+        <point x="105" y="150"></point>
+      </polygon>
+    </shape>
+    <shape name="link" rotatable="true" editableColorIndex="0">
+      <line endX="150" startY="0" marked="true" color="-1920102913" endY="300" startX="150"></line>
+    </shape>
+    <shape name="link direction" rotatable="true" editableColorIndex="0">
+      <line endX="30" startY="150" marked="true" color="-1920102913" endY="225" startX="150"></line>
+      <line endX="270" startY="150" marked="true" color="-1920102913" endY="225" startX="150"></line>
+    </shape>
+    <shape name="mouse" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="38" y="162"></point>
+        <point x="24" y="165"></point>
+        <point x="19" y="174"></point>
+        <point x="22" y="192"></point>
+        <point x="47" y="213"></point>
+        <point x="90" y="225"></point>
+        <point x="135" y="230"></point>
+        <point x="161" y="240"></point>
+        <point x="178" y="262"></point>
+        <point x="150" y="246"></point>
+        <point x="117" y="238"></point>
+        <point x="73" y="232"></point>
+        <point x="36" y="220"></point>
+        <point x="11" y="196"></point>
+        <point x="7" y="171"></point>
+        <point x="15" y="153"></point>
+        <point x="37" y="146"></point>
+        <point x="46" y="145"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="289" y="142"></point>
+        <point x="271" y="165"></point>
+        <point x="237" y="164"></point>
+        <point x="217" y="185"></point>
+        <point x="235" y="192"></point>
+        <point x="254" y="192"></point>
+        <point x="259" y="199"></point>
+        <point x="245" y="200"></point>
+        <point x="248" y="203"></point>
+        <point x="226" y="199"></point>
+        <point x="200" y="194"></point>
+        <point x="155" y="195"></point>
+        <point x="122" y="185"></point>
+        <point x="84" y="187"></point>
+        <point x="91" y="195"></point>
+        <point x="82" y="192"></point>
+        <point x="83" y="201"></point>
+        <point x="72" y="190"></point>
+        <point x="67" y="199"></point>
+        <point x="62" y="185"></point>
+        <point x="46" y="183"></point>
+        <point x="36" y="165"></point>
+        <point x="40" y="134"></point>
+        <point x="57" y="115"></point>
+        <point x="74" y="106"></point>
+        <point x="60" y="109"></point>
+        <point x="90" y="97"></point>
+        <point x="112" y="94"></point>
+        <point x="92" y="93"></point>
+        <point x="130" y="86"></point>
+        <point x="154" y="88"></point>
+        <point x="134" y="81"></point>
+        <point x="183" y="90"></point>
+        <point x="197" y="94"></point>
+        <point x="183" y="86"></point>
+        <point x="212" y="95"></point>
+        <point x="211" y="88"></point>
+        <point x="224" y="83"></point>
+        <point x="235" y="88"></point>
+        <point x="248" y="97"></point>
+        <point x="246" y="90"></point>
+        <point x="257" y="107"></point>
+        <point x="255" y="97"></point>
+        <point x="270" y="120"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="234" y="100"></point>
+        <point x="220" y="96"></point>
+        <point x="210" y="100"></point>
+        <point x="214" y="111"></point>
+        <point x="228" y="116"></point>
+        <point x="239" y="115"></point>
+      </polygon>
+      <circle x="246" y="117" marked="false" color="255" diameter="20" filled="true"></circle>
+      <line endX="282" startY="153" marked="true" color="-1920102913" endY="174" startX="270"></line>
+      <line endX="255" startY="153" marked="true" color="-1920102913" endY="173" startX="272"></line>
+      <line endX="268" startY="156" marked="true" color="-1920102913" endY="177" startX="269"></line>
+    </shape>
+    <shape name="rabbit" rotatable="false" editableColorIndex="4">
+      <polygon color="-303222273" filled="true" marked="true">
+        <point x="61" y="150"></point>
+        <point x="76" y="180"></point>
+        <point x="91" y="195"></point>
+        <point x="103" y="214"></point>
+        <point x="91" y="240"></point>
+        <point x="76" y="255"></point>
+        <point x="61" y="270"></point>
+        <point x="76" y="270"></point>
+        <point x="106" y="255"></point>
+        <point x="132" y="209"></point>
+        <point x="151" y="210"></point>
+        <point x="181" y="210"></point>
+        <point x="211" y="240"></point>
+        <point x="196" y="255"></point>
+        <point x="181" y="255"></point>
+        <point x="166" y="247"></point>
+        <point x="151" y="255"></point>
+        <point x="166" y="270"></point>
+        <point x="211" y="270"></point>
+        <point x="241" y="255"></point>
+        <point x="240" y="210"></point>
+        <point x="270" y="225"></point>
+        <point x="285" y="165"></point>
+        <point x="256" y="135"></point>
+        <point x="226" y="105"></point>
+        <point x="166" y="90"></point>
+        <point x="91" y="105"></point>
+      </polygon>
+      <polygon color="-303222273" filled="true" marked="true">
+        <point x="75" y="164"></point>
+        <point x="94" y="104"></point>
+        <point x="70" y="82"></point>
+        <point x="45" y="89"></point>
+        <point x="19" y="104"></point>
+        <point x="4" y="149"></point>
+        <point x="19" y="164"></point>
+        <point x="37" y="162"></point>
+        <point x="59" y="153"></point>
+      </polygon>
+      <polygon color="-303222273" filled="true" marked="true">
+        <point x="64" y="98"></point>
+        <point x="96" y="87"></point>
+        <point x="138" y="26"></point>
+        <point x="130" y="15"></point>
+        <point x="97" y="36"></point>
+        <point x="54" y="86"></point>
+      </polygon>
+      <polygon color="-303222273" filled="true" marked="true">
+        <point x="49" y="89"></point>
+        <point x="57" y="47"></point>
+        <point x="78" y="4"></point>
+        <point x="89" y="20"></point>
+        <point x="70" y="88"></point>
+      </polygon>
+      <circle x="29" y="110" marked="false" color="255" diameter="32" filled="true"></circle>
+      <polygon color="-1491375361" filled="true" marked="false">
+        <point x="0" y="150"></point>
+        <point x="15" y="165"></point>
+        <point x="15" y="150"></point>
+      </polygon>
+      <polygon color="-1491375361" filled="true" marked="false">
+        <point x="76" y="90"></point>
+        <point x="97" y="47"></point>
+        <point x="130" y="32"></point>
+      </polygon>
+      <line endX="180" startY="180" marked="false" color="-1920102913" endY="165" startX="165"></line>
+      <line endX="225" startY="165" marked="false" color="-1920102913" endY="165" startX="180"></line>
+    </shape>
+    <shape name="wasp" rotatable="true" editableColorIndex="0">
+      <polygon color="-303222273" filled="true" marked="false">
+        <point x="195" y="135"></point>
+        <point x="105" y="135"></point>
+        <point x="90" y="150"></point>
+        <point x="90" y="210"></point>
+        <point x="105" y="255"></point>
+        <point x="135" y="285"></point>
+        <point x="165" y="285"></point>
+        <point x="195" y="255"></point>
+        <point x="210" y="210"></point>
+        <point x="210" y="150"></point>
+        <point x="195" y="135"></point>
+      </polygon>
+      <rectangle endX="212" startY="165" marked="false" color="255" endY="185" startX="90" filled="true"></rectangle>
+      <polygon color="255" filled="true" marked="false">
+        <point x="90" y="207"></point>
+        <point x="90" y="226"></point>
+        <point x="210" y="226"></point>
+        <point x="210" y="207"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="103" y="266"></point>
+        <point x="198" y="266"></point>
+        <point x="203" y="246"></point>
+        <point x="96" y="246"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="false">
+        <point x="120" y="135"></point>
+        <point x="105" y="120"></point>
+        <point x="105" y="60"></point>
+        <point x="120" y="45"></point>
+        <point x="180" y="45"></point>
+        <point x="195" y="60"></point>
+        <point x="195" y="120"></point>
+        <point x="180" y="135"></point>
+      </polygon>
+      <polygon color="-1653716737" filled="true" marked="false">
+        <point x="150" y="0"></point>
+        <point x="120" y="15"></point>
+        <point x="120" y="45"></point>
+        <point x="180" y="45"></point>
+        <point x="180" y="15"></point>
+      </polygon>
+      <circle x="105" y="15" marked="false" color="255" diameter="30" filled="true"></circle>
+      <circle x="165" y="15" marked="false" color="255" diameter="30" filled="true"></circle>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="180" y="75"></point>
+        <point x="270" y="90"></point>
+        <point x="300" y="150"></point>
+        <point x="300" y="210"></point>
+        <point x="285" y="210"></point>
+        <point x="255" y="195"></point>
+        <point x="210" y="120"></point>
+        <point x="180" y="90"></point>
+      </polygon>
+      <polygon color="255" filled="true" marked="false">
+        <point x="135" y="300"></point>
+        <point x="165" y="300"></point>
+        <point x="165" y="285"></point>
+        <point x="135" y="285"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="120" y="75"></point>
+        <point x="30" y="90"></point>
+        <point x="0" y="150"></point>
+        <point x="0" y="210"></point>
+        <point x="15" y="210"></point>
+        <point x="45" y="195"></point>
+        <point x="90" y="120"></point>
+        <point x="120" y="90"></point>
+      </polygon>
+    </shape>
+    <shape name="x" rotatable="false" editableColorIndex="0">
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="270" y="75"></point>
+        <point x="225" y="30"></point>
+        <point x="30" y="225"></point>
+        <point x="75" y="270"></point>
+      </polygon>
+      <polygon color="-1920102913" filled="true" marked="true">
+        <point x="30" y="75"></point>
+        <point x="75" y="30"></point>
+        <point x="270" y="225"></point>
+        <point x="225" y="270"></point>
+      </polygon>
+    </shape>
+  </turtleShapes>
+  <linkShapes>
+    <shape name="default" curviness="0.0">
+      <lines>
+        <line x="-0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+        <line x="0.0" visible="true">
+          <dash value="1.0"></dash>
+          <dash value="0.0"></dash>
+        </line>
+        <line x="0.2" visible="false">
+          <dash value="0.0"></dash>
+          <dash value="1.0"></dash>
+        </line>
+      </lines>
+      <indicator>
+        <shape name="link direction" rotatable="true" editableColorIndex="0">
+          <line endX="90" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+          <line endX="210" startY="150" marked="true" color="-1920102913" endY="180" startX="150"></line>
+        </shape>
+      </indicator>
+    </shape>
+  </linkShapes>
+  <previewCommands>setup repeat 75 [ go ]</previewCommands>
+</model>

@@ -1,0 +1,189 @@
+// --- 1. DEFINE VARIABLES ---
+val seed = Val[Int] 
+val resultFile = Val[File]
+val fileNameSuffix = Val[String]
+
+// LHS Variables (Double)
+val amountofgrassland = Val[Double]
+val plantgrowthrate = Val[Double]
+val maxplantenergy = Val[Double]
+
+val amountoffoodbandicootseat = Val[Double]
+val bandicootsenergygain = Val[Double]
+val minreproduceenergybandicoots = Val[Double]
+val humanhuntchancebandicoots = Val[Double]
+val viewradiusbandicoots = Val[Double]
+
+val minreproduceenergyfoxes = Val[Double]
+val foxesenergygain = Val[Double]
+val humanhuntchancefoxes = Val[Double]
+val viewradiusfoxes = Val[Double]
+
+val amountoffoodinvaderseat = Val[Double]
+val humanhuntchanceinvaders = Val[Double]
+val viewradiusinvaders = Val[Double]
+val invadersenergygain = Val[Double]
+val minreproduceenergyinvaders = Val[Double]
+
+
+// --- 2. SAMPLING (LHS x SEEDS) ---
+val lhsBlock = LHS(
+ 850,
+  Seq(
+    amountofgrassland in (10.0, 100.0),
+    plantgrowthrate in (5.0, 25.0),
+    maxplantenergy in (50.0, 250.0),
+    amountoffoodbandicootseat in (2.0, 10.0),
+    amountoffoodinvaderseat in (2.0, 10.0),
+    
+    // Bandicoots
+    minreproduceenergybandicoots in (8.0, 20.0),
+    bandicootsenergygain in (1.0, 20.0),
+    humanhuntchancebandicoots in (0.0, 50.0),
+    viewradiusbandicoots in (0.0, 6.0),
+    
+    // Foxes
+    minreproduceenergyfoxes in (12.0, 30.0),
+    foxesenergygain in (10.0, 50.0),
+    humanhuntchancefoxes in (0.0, 50.0),
+    viewradiusfoxes in (0.0, 6.0),
+    
+    // Invaders
+    minreproduceenergyinvaders in (8.0, 20.0),
+    humanhuntchanceinvaders in (0.0, 50.0),
+    viewradiusinvaders in (1.0, 6.0),
+    invadersenergygain in (0.0, 20.0)
+  )
+)
+
+val seedBlock = seed in Seq(1,2,3,4,5)
+val sampling = lhsBlock x seedBlock
+
+
+// --- 3. CLEANING TASK (FIXED: All 17 Variables Included) ---
+val cleaningTask = ScalaTask("""
+  // 1. Round basic variables
+  amountofgrassland = math.round(amountofgrassland)
+  plantgrowthrate = math.round(plantgrowthrate)
+  maxplantenergy = math.round(maxplantenergy)
+  humanhuntchancebandicoots = math.round(humanhuntchancebandicoots)
+  humanhuntchancefoxes = math.round(humanhuntchancefoxes)
+  humanhuntchanceinvaders = math.round(humanhuntchanceinvaders)
+  
+  amountoffoodbandicootseat = math.round(amountoffoodbandicootseat)
+  bandicootsenergygain = math.round(bandicootsenergygain)
+  minreproduceenergybandicoots = math.round(minreproduceenergybandicoots)
+  minreproduceenergyfoxes = math.round(minreproduceenergyfoxes)
+  foxesenergygain = math.round(foxesenergygain)
+  amountoffoodinvaderseat = math.round(amountoffoodinvaderseat)
+  invadersenergygain = math.round(invadersenergygain)
+  minreproduceenergyinvaders = math.round(minreproduceenergyinvaders)
+  
+  // 2. Define View Radius variables locally
+  val b_view = math.round(viewradiusbandicoots)
+  val f_view = math.round(viewradiusfoxes )
+  val i_view = math.round(viewradiusinvaders ) 
+  
+  // 3. Update global variables
+  viewradiusbandicoots = b_view
+  viewradiusfoxes = f_view
+  viewradiusinvaders = i_view
+  
+  // 4. Create the FULL Filename Suffix (17 Variables + Seed)
+  val fileNameSuffix = s"S${seed}_Gr${amountofgrassland.toInt}_PR${plantgrowthrate.toInt}_PM${maxplantenergy.toInt}" +
+                       s"_BF${amountoffoodbandicootseat.toInt}_BG${bandicootsenergygain.toInt}_BR${minreproduceenergybandicoots.toInt}_BH${humanhuntchancebandicoots.toInt}_BV${b_view}" +
+                       s"_FR${minreproduceenergyfoxes.toInt}_FG${foxesenergygain.toInt}_FH${humanhuntchancefoxes.toInt}_FV${f_view}" +
+                       s"_IF${amountoffoodinvaderseat.toInt}_IG${invadersenergygain.toInt}_IR${minreproduceenergyinvaders.toInt}_IH${humanhuntchanceinvaders.toInt}_IV${i_view}.csv"
+""") set (
+  // Inputs
+  inputs += (
+    seed, amountofgrassland, plantgrowthrate, maxplantenergy,
+    amountoffoodbandicootseat, bandicootsenergygain, minreproduceenergybandicoots, humanhuntchancebandicoots, viewradiusbandicoots,
+    minreproduceenergyfoxes, foxesenergygain, humanhuntchancefoxes, viewradiusfoxes,
+    amountoffoodinvaderseat, humanhuntchanceinvaders, viewradiusinvaders, invadersenergygain, minreproduceenergyinvaders
+  ),
+  
+  // Outputs: Split to ensure stability
+  outputs += fileNameSuffix,
+  outputs += seed,
+  outputs += (amountofgrassland, plantgrowthrate, maxplantenergy),
+  outputs += (amountoffoodbandicootseat, bandicootsenergygain, minreproduceenergybandicoots, humanhuntchancebandicoots, viewradiusbandicoots),
+  outputs += (minreproduceenergyfoxes, foxesenergygain, humanhuntchancefoxes, viewradiusfoxes),
+  outputs += (amountoffoodinvaderseat, humanhuntchanceinvaders, viewradiusinvaders, invadersenergygain, minreproduceenergyinvaders)
+)
+
+
+// --- 4. NETLOGO COMMANDS ---
+val cmds = List(
+  "random-seed ${seed}",
+  "set amount-of-grassland ${amountofgrassland}",
+  "set plant-growth-rate ${plantgrowthrate}",
+  "set max-plant-energy ${maxplantenergy}",
+  
+  "set amount-of-food-bandicoots-eat ${amountoffoodbandicootseat}",
+  "set bandicoots-energy-gain-from-grass ${bandicootsenergygain}",
+  "set min-reproduce-energy-bandicoots ${minreproduceenergybandicoots}",
+  "set human-hunt-chance-bandicoots ${humanhuntchancebandicoots}",
+  "set view-radius-bandicoots ${viewradiusbandicoots}",
+  
+  "set min-reproduce-energy-foxes ${minreproduceenergyfoxes}",
+  "set foxes-energy-gain-from-bandicoots ${foxesenergygain}",
+  "set human-hunt-chance-foxes ${humanhuntchancefoxes}",
+  "set view-radius-foxes ${viewradiusfoxes}",
+  
+  "set amount-of-food-invaders-eat ${amountoffoodinvaderseat}",
+  "set human-hunt-chance-invaders ${humanhuntchanceinvaders}",
+  "set view-radius-invaders ${viewradiusinvaders}",
+  "set invaders-energy-gain-from-grass ${invadersenergygain}",
+  "set min-reproduce-energy-invaders ${minreproduceenergyinvaders}",
+  
+  "setup",
+  "repeat 1000 [ go ]"
+)
+
+
+// --- 5. THE TASK ---
+val taxiTask =
+  NetLogo7Task(workDirectory / "Paul-preys.nlogox", cmds) set (
+    // Inputs
+    inputs += fileNameSuffix, // Receives the clean filename
+    inputs += seed,
+    inputs += amountofgrassland mapped "amount-of-grassland",
+    inputs += plantgrowthrate mapped "plant-growth-rate",
+    inputs += maxplantenergy mapped "max-plant-energy",
+    
+    inputs += amountoffoodbandicootseat mapped "amount-of-food-bandicoots-eat",
+    inputs += bandicootsenergygain mapped "bandicoots-energy-gain-from-grass",
+    inputs += minreproduceenergybandicoots mapped "min-reproduce-energy-bandicoots",
+    inputs += humanhuntchancebandicoots mapped "human-hunt-chance-bandicoots",
+    inputs += viewradiusbandicoots mapped "view-radius-bandicoots",
+    
+    inputs += minreproduceenergyfoxes mapped "min-reproduce-energy-foxes",
+    inputs += foxesenergygain mapped "foxes-energy-gain-from-bandicoots",
+    inputs += humanhuntchancefoxes mapped "human-hunt-chance-foxes",
+    inputs += viewradiusfoxes mapped "view-radius-foxes",
+    
+    inputs += amountoffoodinvaderseat mapped "amount-of-food-invaders-eat",
+    inputs += humanhuntchanceinvaders mapped "human-hunt-chance-invaders",
+    inputs += viewradiusinvaders mapped "view-radius-invaders",
+    inputs += invadersenergygain mapped "invaders-energy-gain-from-grass",
+    inputs += minreproduceenergyinvaders mapped "min-reproduce-energy-invaders",
+    
+    outputFiles += ("openmole_output.csv", resultFile),
+    
+    outputs += (seed, fileNameSuffix)
+  )
+
+
+// --- 6. SAVE RESULTS ---
+val fileHook = CopyFileHook(
+  resultFile,
+  workDirectory / "results" / "Run_${fileNameSuffix}"
+)
+
+
+// --- 7. EXECUTION ---
+DirectSampling(
+  evaluation = cleaningTask -- taxiTask,
+  sampling = sampling
+) hook fileHook
