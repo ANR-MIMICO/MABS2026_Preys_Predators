@@ -28,6 +28,50 @@ MABS2026_Preys_Predators/
 ├── LICENSE                         # BSD-3-Clause License
 └── README.md                       # Project documentation
 ```
+## 📊 Figures & Results
+
+All figures generated from our experiments are organized by the analytical phase described in the paper.
+
+
+### 1. Global Regime Dynamics
+The ecosystem exhibits distinct stability regimes driven by the interplay of predator-prey density and resource availability. We compare the initial exploration (v1) with the refined sampling (v2).
+
+| Initial Batch (v1) | Refined Batch (v2) |
+|:---:|:---:|
+| ![Regime V1](figures/v1/regime_proportions_corrected_legend.png) | ![Regime V2](figures/v2/regime_proportions_corrected_legend.png) |
+
+* **Figure 1:** Distribution of simulation outcomes (Extinction, Oscillation, Coexistence).
+    * **Left (v1):** Initial LHS exploration ($N=3,250$).
+    * **Right (v2):** Refined sampling ($N=13,000$) with a focused parameter range. The dominance of the Extinction regime (gray) highlights the system's vulnerability to specific parameter combinations.
+---
+
+### 2. Model-Based Exploration (Phase 1)
+Initial screening using decision trees to identify primary tipping points.
+
+![Decision Tree](figures/v1/dt.png)
+* **Figure 2:** A Decision Tree (CART) trained on the initial batch. It identifies the primary anthropogenic tipping point: when the **Proportion of Hunting Zones (PH)** exceeds $\approx 31\%$, the system shifts deterministically toward extinction.
+
+---
+
+### 3. Global Sensitivity Analysis (Phase 2)
+Sobol' sensitivity analysis reveals that while linear models emphasize predation, non-linear models identify metabolic constraints as the true drivers.
+
+![Sobol Indices](figures/v2/sobol_indices_mlp_sorted.png)
+![Interaction Heatmap](figures/v2/sobol_interactions_heatmap_sorted_full.png)
+* **Figure 3:** * **Top:** Sobol' Indices (First vs Total). Bandicoot Energy Gain ($BG$) and Grassland ($Gr$) emerge as dominant drivers when non-linearities are accounted for.
+    * **Bottom:** Interaction Heatmap revealing strong coupling between prey metabolism ($BG$) and environmental capacity ($Gr$).
+
+---
+
+### 4. Explainability & Uncertainty Quantification
+We use Partial Dependence Plots (PDP) to visualize trends and a Dual-Random Forest to map stability zones.
+
+![PDP and ICE Plots](figures/v2/pdp_ice_mlp_raw_axis.png)
+![Total Uncertainty](figures/v2/total_uncertainty_proba_euclidean.png)
+* **Figure 4:**
+    * **Top (PDP/ICE):** The coloring by $BG$ reveals a **"Metabolic Trap"**: increasing grass has zero effect on survival if energy gain is low (blue lines), but triggers a sharp transition to coexistence if energy gain is high (red lines).
+    * **Bottom (Uncertainty):** Maps the Euclidean sum of Aleatoric and Epistemic uncertainty ($\sigma_{total}$). The peaks (humps) precisely identify **Phase Transition Zones** where the ecosystem is structurally unstable and highly sensitive to stochastic initial conditions.
+
 
 ## ⚙️ Installation
 
